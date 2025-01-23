@@ -1,0 +1,802 @@
+---
+title: "Food Deserts: Their Influence on Education and Obesity Rates In States level"
+author: "Shihua Yang, Andy Thong, Adam Jeide, Albert Zhong, Anh Tran"
+output: 
+  html_document:
+    theme: united
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+    code_folding: show
+---
+
+## Introduction
+Food deserts are geographic areas where residents face significant barriers to accessing affordable and nutritious food. These barriers often result from a lack of nearby grocery stores, supermarkets, or farmers' markets offering fresh and healthy options. Instead, communities in food deserts frequently rely on convenience stores or fast-food outlets, which predominantly provide processed, calorie-dense, and nutritionally poor food options[^1].
+
+The U.S. Department of Agriculture (USDA) defines food deserts based on two criteria: **low-income (LI)** and **low-access (LA)** communities. This definition, while useful, has faced criticism for oversimplifying the complex realities of food access in urban and rural settings. According to USDA guidelines: 
+
+- **Low-income (LI)** is labeled as poverty rate of 20\% or greater, or median family income at or below 80\% of the statewide or metropolitan area median family income.
+
+- **Low-access (LA)** describing a low-income with at least 500 people or 33\% of the tract's population living more than 1 mile (urban areas) or more than 10 miles (rural areas) from the closest supermarket or grocery store [^2]. 
+
+According to a recent USDA report, approximately **39.5 million people (12.8\% of the U.S. population)** live in areas classified as both low-income and low-access (LILA)[^3]. These food deserts are closely linked to diets high in sugar and fats, contributing to health issues like obesity. Understanding the correlation between LILA areas and public health indicators, such as obesity rates, can shed light on the broader impacts of food deserts.
+
+Economic and educational disparities also play a critical role in shaping food access. Higher education levels are often associated with improved economic opportunities and better access to resources, including nutritious food. Exploring the intersection of LILA areas, obesity rates, and education levels provides a comprehensive framework for addressing food security and health inequities.
+
+
+```{r setup, include=FALSE}
+# control global Rmd chunk settings
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## Question
+How do food deserts, characterized by low access to nutritious food, correlate with obesity rates and educational attainment across states in the United States?
+
+### Load packages
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(httr)
+library(knitr)
+library(reshape2)
+```
+
+## The Data
+This comprehensive dataset combines information from three different resources. The main dataset, sourced from the USDA's Food Access Research Atlas which is merged with the Census Tract data, contains 72,864 observations across 147 variables. It provides detailed information about demographic characteristics including age, race, urban or rural classifications, and income levels at the census tract level, along with various indicators of food access such as LILA (Low Income, Low Access) tract designations. In addition, the primary dataset is complemented by two additional sources: the 2023 Census Education data from the US Census Bureau, which contains extensive educational attainment metrics across 1,540 variables for 53 geographical areas, and a dataset published by Lake County, Illinois through data.gov that provides obesity percentages for each state. Combined, these datasets will help provide a foundation for analyzing the relationships between food access, obesity rates, and educational attainment across different geographical regions in the United States.
+
+However, the data from education downloaded from the U.S. Census website is not in tidy format and required a lot of wrangling before it is usable. Following the YouTube tutorial to transform the Census data to a more manageable format so that we can manipulate[^4]. The first step is to find the S1501 data through the census.gov/developers to manipulate the url to get the education data in the geographical that we wanted. Next, download the data and variables in csv files. Then, use VLOOKUP() to translate the variable code to their name. With this, the data is ready to be in load into RStudio to further wrangle.
+
+### Data Import
+
+```{r}
+food_access <- read_csv('data/food_access_research_atlas.csv')
+food_access_labels <- read_csv('data/food_access_variable_lookup.csv')
+education <- read_csv('data/S1501_Education_State.csv')
+obesity <- read.csv('data/NationalObesityByState.csv')
+```
+
+### Data Wrangling
+
+```{r}
+# Delete LongName column and look at the table to understand the variables better
+food_access_labels <- food_access_labels |>
+  select(-contains("LongName"))
+
+kable(food_access_labels)
+```
+
+From analyzing the food access label, we noticed a couple of variables that can be used to identify the amount of food desert identified within a state with the labels lilatracts_1and10, lilatracts_halfand10, lilatracts_1and20 and lilatracts_vehicle. The other important groups of variables would be the overall tract characteristics that resides in TractLOWI, TractKids, TractSeniors, TractWhite, TractBlack, TractAsian, TractNHOPI, TractAIAN, TractOMultir, TractHispanic, TractHUNV, TractSNAP.
+
+The rest of the data can help us gain an insight in population beyond supermarket distances can be accessed through lapop1_10, lapop05_10, and lapop1_20. Low-income population and poverty can be calculate using lowincometracts, povertyrate, medianfamilyincome. Low access population metrics divided up to Flags: la1and10,lahalfand10, la1and20, latracts_half, latracts1, latracts10, latracts20, latractsvehicle_20. Counts: lapop1_10, lapop05_10, lapop1_20, lapophalf, lapop1, lapop10, lapop20. Then shares: lapophalfshare, lapop1share, lapop10share, lapop20share. Low-income and demographic access metrics have counts in lalow1_10m lalowi05_10, lalowi1_20, lalowihalf, lalowi1, lalowi10, lalowi20 and shares in lalowihalfshare, lalowi1share, lalowi10share, lalowi20share. 
+
+```{r}
+sum(is.na(food_access))
+```
+#### Food Desert Data Wrangle
+
+```{r}
+#Making all of food access lower case
+food_access <- food_access |>
+  rename_all(make.names) |>
+  rename_all(tolower)
+```
+
+#### Obesity Data Wrangle
+
+```{r}
+#Cleaning obesity data
+obesity <- obesity |>
+  rename_all(make.names) |>
+  rename_all(tolower) |>
+  select(-contains("shape")) |>
+  select(-contains("object"))
+```
+
+#### Education Wrangle
+
+```{r}
+#Removing the first two column because it is not important
+education <- education |>
+  select(-`[["NAME"`,-GEO_ID)
+```
+
+```{r}
+#Change the name of the variables to the second row
+education <- education |>
+  slice(-c(0,1)) |>
+  setNames(education[1,])
+```
+
+```{r}
+#Change the name of first variable
+colnames(education)[1] <- "state"
+```
+
+```{r}
+#Remove all column that contain annotation because all it contains is null
+colnames(education) <- make.names(colnames(education), unique = TRUE)
+
+education <- education |>
+  select(-contains("Annotation"))
+```
+
+```{r}
+#Lower case all, remove periods
+education <- education |>
+  rename_with(~ tolower(gsub("\\.", "", .x)))
+```
+
+```{r}
+#Making column names easier to read
+education <- education |>
+  rename_with(~ gsub("estimatetotal", "estimate_", .x)) |>
+  rename_with(~ gsub("marginoferror", "moe_", .x)) |>
+  rename_with(~ gsub("population", "", .x)) |>
+  rename_with(~ gsub("agebyeducationalattainment", "age", .x)) |>
+  rename_with(~ gsub("years", "", .x)) |>
+  rename_with(~ gsub("lessthanhighschoolgraduate", "lt_hs", .x)) |>
+  rename_with(~ gsub("highschoolgraduateincludesequivalency", "hs_grad", .x)) |>
+  rename_with(~ gsub("bachelorsdegreeorhigher", "bach_plus", .x)) |>
+  rename_with(~ gsub("lessthan9thgrade", "lt_9thgrade", .x)) |>
+  rename_with(~ gsub("byeducationalattainment", "", .x)) |>
+  rename_with(~ gsub("total", "", .x)) |>
+  rename_with(~ gsub("highschool", "hs", .x)) |>
+  rename_with(~ gsub("graduate", "grad", .x))
+```
+
+```{r}
+#According to the census website, -888888888 indicate the estimate or margin or error is not applicable
+#And -999999999 mean that estimate or margin of error cannot be displayed because of insufficient number of sample cases
+
+education <- education |>
+  mutate(across(-state, as.numeric)) |>
+  mutate(across(-state, ~ na_if(.x, -888888888))) |>
+  mutate(across(-state, ~ na_if(.x, -999999999)))
+```
+
+```{r}
+#Taking out margin of errors because it we do not need it in this analysis.
+education <- education |>
+  select(-contains("moe"))
+
+```
+
+#### Graphing Wrangle
+
+```{r}
+#Education level by age
+education_age <- c(
+  "estimate_age18to24lt_hs", "estimate_age18to24hs_grad", 
+  "estimate_age18to24somecollegeorassociatesdegree", "estimate_age18to24bach_plus",
+  "estimate_age25to34hsgradorhigher", "estimate_age25to34bach_plus",
+  "estimate_age35to44hsgradorhigher", "estimate_age35to44bach_plus",
+  "estimate_age45to64hsgradorhigher", "estimate_age45to64bach_plus",
+  "estimate_age65andoverhsgradorhigher", "estimate_age65andoverbach_plus"
+)
+
+#Reshape the data to long format
+education_long <- education |>
+  select(state, all_of(education_age)) |>
+  pivot_longer(
+    cols = -state,
+    names_to = c("age_group", "education_level"),
+    names_pattern = "estimate_(age\\d+to\\d+|age\\d+andover)(.*)",
+    values_to = "estimate"
+  ) |>
+  mutate(
+    age_group = recode(age_group,
+                       "age18to24" = "18-24",
+                       "age25to34" = "25-34",
+                       "age35to44" = "35-44",
+                       "age45to64" = "45-64",
+                       "age65andover" = "65+"),
+    education_level = recode(education_level,
+                             "lt_hs" = "Less than High School",
+                             "hs_grad" = "High School Graduate",
+                             "somecollegeorassociatesdegree" = "Some College/Associates",
+                             "bach_plus" = "Bachelor's or Higher",
+                             "hsgradorhigher" = "High School Grad or Higher",
+                             "bach_plus" = "Bachelor's or Higher")
+  )
+#Change order of education
+education_long$education_level <- factor(
+  education_long$education_level,
+  levels = c("Less than High School", "High School Graduate", 
+             "High School Grad or Higher", "Some College/Associates", 
+             "Bachelor's or Higher")
+)
+```
+
+
+```{r}
+#Created new dataset containing only total & percent tracts
+food_desert_by_state <- food_access |>
+  group_by(state) |>
+  summarize(
+    total_tracts = n(),
+    food_desert_tracts = sum(lilatracts_1and10, na.rm = TRUE),
+    pct_food_desert = (food_desert_tracts / total_tracts) * 100
+  )
+```
+
+```{r}
+#Summarize data to get counts of LILA tracts per state
+summary_data <- food_access |>
+  group_by(state) |>
+  summarize(
+    lilatracts_1and10_count = sum(lilatracts_1and10, na.rm = TRUE),
+    lilatracts_halfand10_count = sum(lilatracts_halfand10, na.rm = TRUE),
+    lilatracts_1and20_count = sum(lilatracts_1and20, na.rm = TRUE),
+    lilatracts_vehicle_count = sum(lilatracts_vehicle, na.rm = TRUE)
+  ) |>
+  pivot_longer(cols = starts_with("lilatracts"), names_to = "tract_type", values_to = "count")
+
+#Update tract_type labels for better readability
+summary_data$tract_type <- recode(summary_data$tract_type,
+                                  "lilatracts_1and10_count" = "1 mi urban/ 10 mi rural",
+                                  "lilatracts_halfand10_count" = "0.5 mi urban/ 10 mi rural",
+                                  "lilatracts_1and20_count" = "1 mi urban/ 20 mi rural",
+                                  "lilatracts_vehicle_count" = "vehicle access or 20 mi")
+```
+
+```{r}
+#LILA per state
+lilatracts_count <- food_access |>
+  summarise(across(starts_with("lilatracts"), ~ sum(. == 1, na.rm = TRUE))) |>
+  pivot_longer(cols = everything(), names_to = "tract_type", values_to = "count")
+
+lilatracts_count <- lilatracts_count |>
+  mutate(percentage = count / nrow(food_access) * 100)
+lilatracts_count$tract_type <- recode(lilatracts_count$tract_type,
+                                  "lilatracts_1and10" = "LILA (1 mi urban/ 10 mi rural)",
+                                  "lilatracts_halfand10" = "LILA (0.5 mi urban/ 10 mi rural)",
+                                  "lilatracts_1and20" = "LILA (1 mi urban/ 20 mi rural)",
+                                  "lilatracts_vehicle" = "LILA (vehicle access or 20 mi)")
+```
+
+```{r}
+# Select relevant race columns
+racial_vars <- c(
+  "lawhitehalf", "lablackhalf", "laasianhalf", "lanhopihalf", "laaianhalf", "lahisphalf", "laomultirhalf",
+  "lawhite1", "lablack1", "laasian1", "lanhopi1", "laaian1", "lahisp1", "laomultir1",
+  "lawhite10", "lablack10", "laasian10", "lanhopi10", "laaian10", "lahisp10", "laomultir10",
+  "lawhite20", "lablack20", "laasian20", "lanhopi20", "laaian20", "lahisp20", "laomultir20"
+)
+
+# Reshape the data to long format using explicit parsing
+racial_long <- food_access |>
+  select(state, all_of(racial_vars)) |>
+  pivot_longer(
+    cols = -state,
+    names_to = "variable",
+    values_to = "population"
+  ) |>
+  mutate(
+    race = case_when(
+      grepl("white", variable) ~ "White",
+      grepl("black", variable) ~ "Black",
+      grepl("asian", variable) ~ "Asian",
+      grepl("nhopi", variable) ~ "NativeIslander",
+      grepl("aian", variable) ~ "NativeAmerican",
+      grepl("hisp", variable) ~ "Hispanic",
+      grepl("omultir", variable) ~ "Multiracial"
+    ),
+    distance = case_when(
+      grepl("half", variable) ~ "half",
+      grepl("1$", variable) ~ "1",
+      grepl("10", variable) ~ "10",
+      grepl("20", variable) ~ "20"
+    )
+  ) |>
+  select(-variable)
+
+```
+
+
+```{r}
+#Population and urban per state
+state_pop <- food_access |>
+  group_by(state, urban) |>
+  summarise(total_population = sum(pop2010, na.rm = TRUE)) |>
+  ungroup()
+
+mean_state_pop <- state_pop |>
+  group_by(urban) |>
+  summarise(mean_population = mean(total_population, na.rm = TRUE))
+```
+
+
+## EDA
+
+```{r}
+ggplot(lilatracts_count, aes(x = tract_type , y = count, fill = tract_type)) +
+  geom_bar(stat = "identity") +
+  labs(title = "The Amount of LILA Tract From Different Distance Measured",
+       subtitle = "Percent represents the total amount of county and tract found.",
+       x = "Tract Types", 
+       y = "Count") +
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 20)) +
+  theme(legend.position = "none",
+        plot.title.position = "plot") +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)),
+            vjust = 5)
+```
+
+From looking at this graph, we can see that the amount of LILA count from various distance from 0.5 miles in urban or 10 miles in rural to food source from all over the U.S. stood as the most counted with 20000+ and represented 28\% of the U.S. As the distance increase, we see that the number lowered showing that there are less number of LILA as the distance increase. However, vehicle access showed a higher number of count which can be due to the U.S. being a car centric nation, there will be more LILA that have still struggle to find adequate food access.
+
+```{r fig.height=6}
+ggplot(state_pop, aes(x = reorder(state, total_population), y = total_population, fill = as.factor(urban))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_hline(data = mean_state_pop, aes(yintercept = mean_population, color = as.factor(urban)),
+             linetype = "dashed", size = 1) +
+  labs(title = "Population Distribution Across States",
+       x = "State", 
+       y = "Total Population",
+       fill = "Urban/Rural") +
+  theme(plot.title.position = "plot") +
+  scale_color_manual(
+    values = c(`0` = "brown", `1` = "dodgerblue4"),
+    labels = c(`0` = "Rural", `1` = "Urban"),
+    name = "Mean of Population" # Update legend title
+  ) +
+  scale_fill_manual(
+    values = c(`0` = "coral2", `1` = "steelblue"), # Optional: Customize fill colors for bars
+    labels = c(`0` = "Rural", `1` = "Urban"),
+    name = "Urban/Rural"
+  ) +
+  theme_minimal() +
+  coord_flip()
+```
+
+The Population graph showed that this in 2010 census data, the population of urban California is the most represented in the graph. With Texas, New York, then Florida trailing behind. While having a large population, California have a low number rural area compared relatively to other large urban population. The mean for the population in rural area and urban area also plotted and we can see that it is heavily skewed toward the large states.
+
+```{r fig.width=8, fig.height=10}
+ggplot(summary_data, aes(x = reorder(state, count), y = count, fill = tract_type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "The Amount of LILA Tracts From Different Distances Represented in States",
+       x = "State",
+       y = "Count",
+       fill = "LILA Tract Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 8),
+        legend.position = "top",
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        plot.title.position = "plot") +
+  guides(fill = guide_legend(ncol = 2, bycol = TRUE)) +
+  coord_flip()
+```
+
+Looking at this graph compared to the graph of urban vs. rural area, we can see that it followed similar pattern. However, Texas took the lead for having the most LILA overall in all four different measurement of distances while California look the lead for smaller distances. Florida followed closely similar to the population graph, but we do not see New York showing significant LILA tracts. One such explanation is that New York is a densely populated state with smaller area compared to state such as Texas and California. The convenient of walkability might played a factor in it lower ranking similar to how Texas vast land mass might have created more problem for LILA tracts.
+
+```{r}
+national_avg <- mean(obesity$obesity, na.rm = TRUE)
+
+ggplot(obesity, aes(x = obesity, y = reorder(name, obesity))) +
+  geom_bar(stat = "identity", fill = "steelblue", width = 0.7) + 
+  geom_vline(xintercept = national_avg, linetype = "dashed", color = "black", size = 1) +
+  labs(title = "Obesity Rates by State",
+       x = "Obesity Rate (%)",
+       y = "State") +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8),
+    panel.grid.major.x = element_line(color = "grey90"),
+    panel.grid.major.y = element_blank(),
+    plot.margin = margin(0, 0, 0, 0, "cm"), 
+    axis.text = element_text(size = 5),      
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    plot.title.position = "plot"
+  ) +
+  scale_y_discrete(expand = expansion(add = c(0.8, 0.8))) +  
+  coord_cartesian(clip = "off")  
+
+```
+
+In our analysis of obesity rates in different states reveal some interesting patterns. Firstly, the southern states such as Lousiana, Mississippi, Alabama, West Virginia, and Arkansas to name a few are experiencing the highest obesity rates in the nation. While Western and Northeastern states such as Colorado, Hawaii, Washington DC, and Massachusetts show one of the lowest obesity rates compared to the rest of the nation. Cross referencing with the LILA tracts data above, we cannot see a correlation of food desert indication to high obesity rate.
+
+```{r}
+distances <- c("half", "1", "10", "20")
+
+plots <- lapply(distances, function(dist) {
+  ggplot(racial_long |> filter(distance == dist), aes(x = reorder(state, population), y = population, fill = race)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(
+      title = paste("Population by State and Race (", dist, " mi)", sep = ""),
+      x = "State",
+      y = "Population",
+      fill = "Race"
+    ) +
+    scale_fill_manual(values = c(
+      "White" = "blue",
+      "Black" = "black",
+      "Asian" = "gold",
+      "NativeIsland" = "purple",
+      "NativeAmerican" = "orange",      
+      "Hispanic" = "red",
+      "Multiracial" = "green"
+)) +
+    theme_minimal() +
+    theme(plot.title.position = "plot",
+          legend.position = "top") +
+    coord_flip()
+})
+```
+
+```{r fig.height=8}
+plots[[1]]
+plots[[2]]
+plots[[3]]
+plots[[4]]
+```
+
+Very clustered graphs but from this we can see that in half and 1 mile distance, the population amount is pretty much the same with half represented more racial groups. The most common racial group that stood out is white by showing large number in half and 1 mile distance which suggest that White people are the majority population and represents a lot of the trend in low access across the country. With the increase of distance, Native Americans starting to show up more strongly, and Hispanic and Black showed a little bit of spike too. However, the majority throughout the states are still White.
+
+```{r fig.width=15, fig.height= 16}
+ggplot(education_long, aes(x = reorder(state, estimate), y = estimate, fill = education_level)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ age_group, ncol = 3, scales = "free") + 
+  labs(
+    title = "Education Levels Across States by Age Group",
+    x = "State",
+    y = "Population Estimate",
+    fill = "Education Level"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title.position = "plot",
+    axis.title = element_text(size = 17),
+    legend.position = "bottom",
+    legend.box.just = "center",
+    strip.text = element_text(size = 10)
+  ) +
+  guides(fill = guide_legend(nrow = 1, byrow = TRUE)) +
+  coord_flip()
+```
+
+Looking at the education level through out the U.S. states, it followed the similar pattern of population of each state from the census dataset. Since the education level is also from the census dataset but a different year, this gave us a good intuition that the data trend followed from 2010 to 2024 in the population metric. California have the highest population therefor the education level would seem follow the trend. We can also see that 18-24 age range have a more diverse label with less than high school, high school graduate, some college/associates and bachelor's or higher, while 25-34 age range to 65+ only have high school grad or higher and bachelor's or higher. One interesting observation that we noticed is that New York younger people are more likely to have bachelor's or higher. 
+
+
+## Analysis
+
+To begin our analysis, we can plot scatter plots of data that we are interested in checking for correlations between. To do so, we would want to plot out an independent variable (in our case food deserts) that we think can serve as a sort of predictor of some dependent variable (such as obesity rates or education rates). These scatter plots of the data can then be paired with a linear regression line, which can numerically tell us the extent to which these variables are expected to increase/decrease with each other. It does so by finding the line in which the error (the expected minus the predicted value) for all values is minimized. This line will be in the form of Y = aX + b, where Y is the predicted value, b is the intercept (the baseline value we expect Y to have when the independent variable X is zero), and a is the slope (how we expect the predicted value Y to shift with each increase to the independent variable X).
+
+```{r}
+# Combined Food Desert by State and Obesity Datasets
+combined_data <- merge(
+  obesity |> 
+    select(name, obesity),
+  food_desert_by_state |>
+    select(state, pct_food_desert),
+  by.x = "name",
+  by.y = "state"
+)
+
+ggplot(combined_data, aes(x = pct_food_desert, y = obesity)) +
+  geom_point(color = "darkblue", alpha = 0.6, size = 3) +
+  geom_text(aes(label = name), 
+            size = 2.5, 
+            vjust = -0.5, 
+            hjust = 0.5,
+            check_overlap = TRUE) +
+  geom_smooth(method = "lm", 
+             color = "red", 
+             linetype = "dashed",
+             se = FALSE) +
+  labs(title = "Relationship Between Obesity Rates and Food Deserts by State",
+       x = "Percentage of Census Tracts Classified as Food Deserts",
+       y = "Obesity Rate (%)",
+       caption = "Data source: State-level obesity and food desert statistics") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 10),
+    plot.caption = element_text(size = 8, color = "gray50"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(limits = c(0, max(combined_data$pct_food_desert) + 2)) +
+  scale_y_continuous(limits = c(15, max(combined_data$obesity) + 2))
+
+```
+
+In this scatter plot, it is indicating that there is a positive relationship between food deserts and obesity rates meaning that states with more food deserts tend to have higher obesity rates. In addition, this graph geographically highlights that Southern states like Mississippi, Louisiana, and Arkansas tend to be clustered in the upper right, meaning they have both high obesity rates and high percentages of food deserts. Northeastern states like Massachusetts, New York, and New Jersey tend to be in the lower left with lower rates of both. This suggests that limited access to healthy food may be one factor in contributing to higher obesity rates and potentially a geographical disparity in both food access and health outcomes. To put these findings into numbers, we can extract the linear regression line in our chart (shown as a red dotted line).
+
+```{r}
+lin_mod <- linear_reg() |>
+  set_engine("lm")
+
+obesity_desert <- lin_mod |>
+  fit(obesity ~ pct_food_desert, data = combined_data)
+
+obesity_desert |> 
+  tidy()
+```
+
+From this, we can see that we get a linear model of Obesity Rate = 0.3645(Food Desert %) + 24.3353. In other words, our model expects a baseline obesity rate of 24.34%, and expects this obesity rate to increase by 0.36% for each 1% increase in food deserts in that state. 
+
+
+```{r}
+# Combined Food Desert by State and Obesity Datasets
+combined_data_education <- merge(
+  combined_data |> 
+    select(name, obesity, pct_food_desert),
+  education |>
+    select(state, estimatepercentage25andoverhsgradorhigher, estimatepercentage25andoverbach_plus),
+  by.x = "name",
+  by.y = "state"
+)
+
+ggplot(combined_data_education, aes(x = pct_food_desert, y = estimatepercentage25andoverhsgradorhigher)) +
+  geom_point(color = "darkblue", alpha = 0.6, size = 3) +
+  geom_text(aes(label = name), 
+            size = 2.5, 
+            vjust = -0.5, 
+            hjust = 0.5,
+            check_overlap = TRUE) +
+  geom_smooth(method = "lm", 
+             color = "red", 
+             linetype = "dashed",
+             se = FALSE) +
+  labs(title = "Relationship Between HS Graduation Levels and Food Deserts by State",
+       subtitle = "(Zoomed in with Y Axis starting at 75%)",
+       x = "Percentage of Census Tracts Classified as Food Deserts",
+       y = "HS Graduates (%)",
+       caption = "Data source: US Census Data and food desert statistics") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 10),
+    plot.caption = element_text(size = 8, color = "gray50"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(limits = c(0, max(combined_data_education$pct_food_desert) + 2)) +
+  scale_y_continuous(limits = c(75, max(combined_data_education$estimatepercentage25andoverhsgradorhigher) + 2))
+
+ggplot(combined_data_education, aes(x = pct_food_desert, y = estimatepercentage25andoverbach_plus)) +
+  geom_point(color = "darkblue", alpha = 0.6, size = 3) +
+  geom_text(aes(label = name), 
+            size = 2.5, 
+            vjust = -0.5, 
+            hjust = 0.5,
+            check_overlap = TRUE) +
+  geom_smooth(method = "lm", 
+             color = "red", 
+             linetype = "dashed",
+             se = FALSE) +
+  labs(title = "Relationship Between College Graduate Levels and Food Deserts by State",
+       x = "Percentage of Census Tracts Classified as Food Deserts",
+       y = "College Graduates (%)",
+       caption = "Data source: US Census Data and food desert statistics") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 10),
+    plot.caption = element_text(size = 8, color = "gray50"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(limits = c(0, max(combined_data_education$pct_food_desert) + 2)) +
+  scale_y_continuous(limits = c(0, max(combined_data_education$estimatepercentage25andoverbach_plus) + 2))
+```
+
+In contrast to the data on obesity rates and food deserts, there appears to be a negative relationship between education and food deserts, with bachelors degree (and higher) levels appearing to have a stronger negative slope than high school graduate levels (note that the high school graduate graph has a y axis that starts much higher than 0). This means higher education levels corresponds to lower food desert levels, with this effect being more pronounced for bachelors degree levels compared to high school graduate levels. Like before, Arkansas and especially Mississippi are strong indicators of this trend, having very high food desert levels and education levels on the low end. We can once again put these findings into numbers by extracting our linear regression lines:
+
+```{r}
+hsgrad_desert <- lin_mod |>
+  fit(estimatepercentage25andoverhsgradorhigher ~ pct_food_desert, data = combined_data_education)
+
+hsgrad_desert |>
+  tidy()
+```
+
+For the high school graduates, we can see that we get a linear model of High School Graduate % = -0.1261(Food Desert %) + 92.9247. In other words, our model expects a baseline high school graduation rate (for adults aged 25 and over) of 92.92%, and expects this high school graduation rate to decrease by 0.13% for each 1% increase in food deserts in that state. 
+
+
+```{r}
+bach_desert <- lin_mod |>
+  fit(estimatepercentage25andoverbach_plus ~ pct_food_desert, data = combined_data_education)
+
+bach_desert |>
+  tidy()
+```
+
+For the bachelors degrees, we can see that we get a linear model of Bachelors Degree (or higher) % = -0.6595(Food Desert %) + 44.7084. In other words, our model expects a baseline bachelors degree or higher rate (for adults aged 25 and over) of 44.71%, and expects this rate to decrease by 0.66% for each 1% increase in food deserts in that state. This is a roughly 5.5x higher decrease compared to the high school graduates line!
+
+Next, we want to see how education and obesity rates might intersect. Since obesity goes up with food deserts, and education goes down with food deserts, we expect education and obesity to thus share a negative relationship.
+
+```{r}
+# Combine education and obesity datasets
+education_obesity_data <- merge(
+  education |> 
+    select(state, estimatepercentage25andoverhsgradorhigher, estimatepercentage25andoverbach_plus),
+  obesity |> 
+    select(name, obesity),
+  by.x = "state",
+  by.y = "name"
+)
+
+# Plot for high school graduates vs. obesity rates
+ggplot(education_obesity_data, aes(x = estimatepercentage25andoverhsgradorhigher, y = obesity)) +
+  geom_point(color = "darkblue", alpha = 0.6, size = 3) +
+  geom_text(aes(label = state), 
+            size = 2.5, 
+            vjust = -0.5, 
+            hjust = 0.5,
+            check_overlap = TRUE) +
+  geom_smooth(method = "lm", color = "red", linetype = "dashed", se = FALSE) +
+  labs(title = "Relationship Between HS Graduation Levels and Obesity Rates",
+       x = "HS Graduates (%)",
+       y = "Obesity Rate (%)",
+       caption = "Data source: US Census Data and Obesity Statistics") +
+  theme_minimal()
+
+# Plot for college graduates vs. obesity rates
+ggplot(education_obesity_data, aes(x = estimatepercentage25andoverbach_plus, y = obesity)) +
+  geom_point(color = "darkblue", alpha = 0.6, size = 3) +
+  geom_text(aes(label = state), 
+            size = 2.5, 
+            vjust = -0.5, 
+            hjust = 0.5,
+            check_overlap = TRUE) +
+  geom_smooth(method = "lm", color = "red", linetype = "dashed", se = FALSE) +
+  labs(title = "Relationship Between College Graduation Levels and Obesity Rates",
+       x = "College Graduates (%)",
+       y = "Obesity Rate (%)",
+       caption = "Data source: US Census Data and Obesity Statistics") +
+  theme_minimal()
+```
+
+Looking at our plots, for the first one between high school graduates and obesity, although there does appear to be bit of that expected downward trend, the data is very spread out along the line, meaning our regression line's predictive power would be weaker. Furthermore, since high school graduate numbers begin at roughly ~80%, our intercept number will be very large. However, the numbers can still give us a rough idea of how we expect these two variables to relate to each other. Our second plot between college graduates and obesity is more clustered together, and begins at roughly ~25%, so the intercept likely won't be as wildly high. 
+
+```{r}
+obesity_hsgrad <- lin_mod |>
+  fit(obesity ~ estimatepercentage25andoverhsgradorhigher, data = education_obesity_data)
+
+obesity_hsgrad |>
+  tidy()
+```
+
+Once again we can extract our linear models to get a better numerical idea of our data. We can see that we get a linear model of Obesity % = -0.1261(High School Grad %) + 65.4437. As expected, our model expects an obscenely high baseline obesity rate of 65.44%, and expects this obesity rate to decrease by 0.4% for each 1% increase in high school graduation rates in that state. 
+
+```{r}
+obesity_bach <- lin_mod |>
+  fit(obesity ~ estimatepercentage25andoverbach_plus, data = education_obesity_data)
+
+obesity_bach |>
+  tidy()
+```
+
+For college graduates, we get a linear model of Obesity % = -0.4042(College Grad %) + 42.6993. Our model expects a baseline obesity rate of 43.7%, and expects this obesity rate to decrease by 0.4% for each 1% increase in high school graduation rates in that state. 
+
+Looking at all of the linear regression $R^2$
+
+```{r}
+glance(obesity_desert)$r.squared
+glance(hsgrad_desert)$r.squared
+glance(bach_desert)$r.squared
+glance(obesity_hsgrad)$r.squared
+glance(obesity_bach)$r.squared
+```
+
+The $R^2$ value for obesity and percent food desert is **33.5%**, indicating a **moderate relationship**. This suggests that approximately 33.5% of the variation in obesity rates across states can be explained by the percentage of food deserts.
+
+The $R^2$ value for bachelor's degree or higher and percent food desert is **34.2%**, which also indicates a **moderate relationship**. This suggests that food deserts account for 34.2% of the variation in bachelor's degree attainment
+
+The $R^2$ value for high school graduate and percent food desert is **10.8%**, which indicates a **weak relationship**. Although there is a small correlation between these variables, only 10.8% of the variation in high school graduation rates is explained by the percentage of food deserts.
+
+The strongest relationship observed is between obesity and bachelor's degree or higher, with an $R^2$ value of **52.8%**. This indicates that **more than half of the variation in obesity rates can be explained by differences in bachelor's degree attainment rates across states**.
+
+The $R^2$ value for obesity and high school graduate percent is **7.59%**, which suggests a **very weak relationship**. This indicates that only a small portion of the variation in obesity rates can be attributed to high school graduation rates.
+
+In summary, we can see that there is indeed a negative relationship between obesity and education. However, although we have found all of these positive and negative relationships, we still don't fully know how well each of these actually correlate (since all of the lines and resulting slopes we saw only tell us how much we expect these variables to shift with each other but not exactly how well they actually correlate). Finding these correlations can be done with a correlation heatmap:
+
+```{r}
+food_access_state <- food_access |> 
+  group_by(state) |> 
+  summarize(
+    lalowihalfshare = mean(lalowihalfshare, na.rm = TRUE),
+    lalowi1share = mean(lalowi1share, na.rm = TRUE),
+    lalowi10share = mean(lalowi10share, na.rm = TRUE),
+    lalowi20share = mean(lalowi20share, na.rm = TRUE)
+  )
+
+# Select relevant columns from education data
+education_state <- education |> 
+  select(state, estimatepercentage25andoverhsgradorhigher, estimatepercentage25andoverbach_plus)
+
+# Merge the aggregated food_access data with education data by state
+combined_data <- inner_join(food_access_state, education_state, by = "state")
+
+# Rename variables for better readability
+colnames(combined_data) <- c(
+  "State",
+  "Low-Income (<0.5 mi)",
+  "Low-Income (<1 mi)",
+  "Low-Income (<10 mi)",
+  "Low-Income (<20 mi)",
+  "HS Graduates (%)",
+  "College Graduates (%)"
+)
+
+# Create a correlation matrix for the selected variables
+correlation_matrix <- combined_data |> 
+  select(-State) |> # Exclude the state column for correlation analysis
+  cor(use = "complete.obs")
+
+# Melt the correlation matrix for visualization
+melted_corr <- melt(correlation_matrix)
+
+# Plot the correlation heatmap
+ggplot(melted_corr, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  labs(
+    title = "Correlation Heatmap: Education vs Food Desert Metrics",
+    x = "Variables",
+    y = "Variables",
+    fill = "Correlation"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 9)
+  )
+```
+
+The important values here are in the first two rows (since the bottom four rows denote how well different levels of food desert classifications correlate with each other, which is essentially meaningless). Here, we can see a relatively strong negative correlation between college graduation and low income food desert areas (as seen by the dark blue in the heatmap above), and gets gradually weaker as the food desert range get wider. This can be seen to a much weaker extent for high school graduation, with the correlation actually reversing upon reaching a wide enough level.
+
+## Results & Discussion 
+Our analysis shows several significant patterns in the relationships between food deserts, obesity rates and education across U.S. states:
+
+1. Food Desert Classification Patterns:
+
+The most prevalent type of food desert is classified as "lilatracts_halfand10" (half mile urban/10 mile rural), affecting approximately 20,000 census tracts, while the standard 1-mile urban/10-mile rural classification that we mentioned in our introduction affects about 9,000 tracts.
+Vehicle access-related food deserts affects around 11,000 tracts, indicating that transportation is a significant factor in food accessibility.
+
+2. Geographic Food Deserts Distribution Patterns:
+
+Larger states like Texas and California show the highest frequencies of LILA tracts. When considering proportions, Southern states like Mississippi generally show higher percentages of food deserts.
+
+3. Obesity Patterns:
+
+Southern states like Louisiana, West Virginia, and Mississippi show higher obesity rates, while western and eastern states like Colorado and District of Columbia generally show lower obesity rates. This suggests that there's a regional pattern of obesity suggesting differences in cultural, economic or environmental factors. 
+
+-The correlation analysis shows a positive correlation between food desert prevalence and obesity rates. Southern states generally appearing in the upper right (high food deserts, high obesity).
+
+-States with higher education levels (like District of Columbia) tend to have lower obesity rates, while states with lower education levels like Mississippi often show higher obesity rates.
+
+4. Education and Food Desert Relationship:
+
+High school graduation rates show a small negative correlation with food desert (coefficient = -0.1261), suggesting that states with higher percentages of food deserts tend to have slightly lower high school graduation rates.
+College graduation rates show a larger negative correlation with food deserts (coefficient = -0.6595), suggesting that states with higher percentages of food deserts tend to have much lower college graduation rates.
+
+Shortcomings: Our dataset for the food desert are limited by the education and obesity data as it does not contain the information in the county level which is the main reason why we went with state level. The information that is inside the food desert from the USDA contained the census data from 2010 while obesity and education data from 2024 which can contribute toward incorrect assumption due to time different. Addition reason of concern arise when we looked at professional critiques of USDA using the concept of food desert and by measuring distance from family. This can lead to misleading terminology that often confused people as a natural occurring and not systematically created due to race, social status or economic standing. Next, our method of using LILATract_* as a method to represents the food desert might be flawed and not the best representation. Future research might expand on what would make an area becoming a low income, low accessible and look at additional reason such as race, elevation, walkability of the city, etc...
+
+## Conclusion
+
+This study examined the complex relationships between food deserts, obesity rates, and educational attainment across U.S. states. Our analysis revealed several significant patterns and correlations that highlight the interconnected nature of food access, health outcomes, and educational achievement.
+
+First, we found that food deserts are not distributed uniformly across the United States. While larger states like Texas and California show the highest absolute numbers of LILA (Low-Income, Low-Access) tracts, Southern states generally have higher proportions of their population living in food deserts. This geographic disparity suggests that regional factors, including urban planning, transportation infrastructure, and economic development, play crucial roles in determining food accessibility.
+
+Second, our analysis revealed a positive correlation between food desert prevalence and obesity rates. States with higher percentages of food deserts tend to have higher obesity rates, with Southern states particularly affected by this relationship. This correlation (0.3645% increase in obesity rate for each 1% increase in food desert percentage) suggests that limited access to nutritious food may contribute to poor health outcomes.
+
+Third, we discovered significant negative correlations between educational attainment and both food desert prevalence and obesity rates. The relationship was particularly strong for college education, with a 0.66% decrease in bachelor's degree attainment for each 1% increase in food desert prevalence, compared to a 0.13% decrease for high school graduation rates. This finding suggests that higher education levels may serve as a protective factor against food insecurity and poor health outcomes, possibly through increased income, better health literacy, and improved access to resources.
+
+Our statistical analysis reveals varying strengths of relationships among food deserts, education levels, and obesity rates across U.S. states. The strongest relationship emerges between college education and obesity rates, with an R² value of 52.8%, indicating that over half of the variation in state obesity rates can be explained by college graduation rates alone. Food desert prevalence shows moderate relationships with both obesity rates (R² = 33.5%) and college education levels (R² = 34.2%), suggesting that food access issues account for about one-third of the variation in these outcomes. However, high school graduation rates demonstrate surprisingly weak relationships with both food desert prevalence (R² = 10.8%) and obesity rates (R² = 7.59%). These findings show that though food access is important, educational attainment especially for college education may be a more important factor in understanding and addressing obesity rates across states.
+
+These findings have important implications for policy makers and community planners. The strong correlations between food access, education, and health outcomes suggest that addressing food deserts requires a comprehensive approach that considers not only food retail location but also educational opportunities, economic development, and public health initiatives. Future interventions might be most effective when they target these interconnected factors simultaneously, rather than addressing each in isolation.
+
+Furthermore, the regional patterns identified in our analysis suggest that solutions may need to be tailored to specific geographic and demographic contexts, with particular attention paid to Southern states where these challenges appear to be most pronounced. Future research could benefit from examining these relationships at more granular levels, such as county or census tract, and incorporating additional variables such as income levels, transportation access, and local food policies to better understand the complex dynamics at play.
+
+
+## Reference
+[^1]: Food Empowerment Project. https://foodispower.org/access-health/food-deserts/.
+[^2]: Defining Low-Income, Low-Access Food Areas (Food Deserts). https://crsreports.congress.gov/product/pdf/IF/IF11841.
+[^3]: Food Desert. https://en.wikipedia.org/wiki/Food_desert.
+[^4]: Using the API to Get All Results for an ACS Table. https://www.youtube.com/watch?v=Gv95TSk5nNI.
